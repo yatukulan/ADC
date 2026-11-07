@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADC demo panel</title>
+<style>
+  :root { --text:#111111; --bg:#ffffff; --muted:#444444; --line:#777777; --panel:#f2f2f2; --alarm-bg:#8b0000; --alarm-text:#ffffff; --link:#003a8c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.4 Arial, Helvetica, sans-serif; color:var(--text); background:var(--bg); }
+  header { display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:10px 16px; border-bottom:2px solid var(--text); }
+  header h1 { font-size:18px; margin:0; }
+  main { display:grid; grid-template-columns: minmax(460px,1.7fr) minmax(300px,1fr) minmax(340px,1.2fr); gap:14px; padding:14px; align-items:start; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  section { border:2px solid var(--text); padding:10px 12px; }
+  h2 { font-size:16px; margin:0 0 8px; }
+  h3 { font-size:14px; margin:12px 0 4px; }
+  button { font:inherit; color:var(--text); background:#fff; border:2px solid var(--text); padding:4px 10px; margin:2px 2px 2px 0; cursor:pointer; }
+  button:hover { background:#e6e6e6; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--link); outline-offset:1px; }
+  input, select { font:inherit; padding:3px 6px; border:2px solid var(--text); background:#fff; color:var(--text); }
+  input[type=number] { width:70px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:3px 6px; text-align:left; vertical-align:top; }
+  th { background:var(--panel); }
+  .bar { display:flex; flex-wrap:wrap; gap:6px 18px; padding:6px 8px; background:var(--panel); border:1px solid var(--line); margin-bottom:8px; }
+  .alarm { background:var(--alarm-bg); color:var(--alarm-text); padding:8px 10px; margin:6px 0; font-weight:bold; }
+  .notice { border-left:6px solid var(--link); background:var(--panel); padding:6px 10px; margin:6px 0; }
+  .reject { border-left:6px solid var(--alarm-bg); background:var(--panel); padding:6px 10px; margin:6px 0; font-weight:bold; }
+  .confirm { border:2px solid var(--text); padding:8px 10px; margin:6px 0; }
+  .muted { color:var(--muted); font-size:13px; }
+  .row { margin:4px 0; }
+  .off { opacity:.55; }
+  details { margin-top:10px; border:1px solid var(--line); padding:6px 10px; }
+  summary { cursor:pointer; font-weight:bold; }
+  ol { margin:6px 0 0 18px; padding:0; }
+  .mono { font-family: Consolas, monospace; font-size:12px; }
+  .scroll { max-height:230px; overflow:auto; border:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Automated Dispensing Cabinet: demo panel</h1>
+  <span id="clock" aria-live="off"></span>
+  <span>Speed:
+    <button onclick="api('speed',{x:1})">1x</button><button onclick="api('speed',{x:5})">5x</button><button onclick="api('speed',{x:20})">20x</button>
+    <button onclick="api('advance',{s:10})">+10 s</button><button onclick="api('advance',{s:60})">+60 s</button>
+    <button onclick="api('pause',{})" id="pausebtn">Pause</button>
+  </span>
+  <span id="speedlabel"></span>
+  <button onclick="if(confirm('Reset the cabinet, its database and the Monitoring System view?')) api('reset',{})">Reset demo</button>
+  <button id="soundbtn" onclick="enableSound()">Turn on alarm sound</button>
+</header>
+<main>
+  <!-- COLUMN 1: touchscreen -->
+  <section aria-label="Cabinet touchscreen">
+    <h2>Cabinet touchscreen (local user interface)</h2>
+    <div id="status" class="bar"></div>
+    <div id="alarms"></div>
+    <div id="messages"></div>
+    <div id="confirmation"></div>
+
+    <h3>Dispense (Nurse)</h3>
+    <div class="row">
+      <label>Patient ID <input id="d_patient" value="P-1001" size="9"></label>
+      <label>Medication <select id="d_med"></select></label>
+      <label>Qty <input id="d_qty" type="number" min="1" value="1"></label>
+    </div>
+    <button onclick="dispense()">Request</button>
+    <button onclick="touch('confirm')">Confirm</button>
+    <button onclick="touch('cancel')">Cancel request</button>
+
+    <h3>Inventory (Pharmacist or Technician)</h3>
+    <div class="row">
+      <label>Medication <select id="i_med"></select></label>
+      <label>Qty <input id="i_qty" type="number" min="0" value="5"></label>
+    </div>
+    <button onclick="inv('replenish')">Replenish</button>
+    <button onclick="inv('count')">Enter count</button>
+    <button onclick="touch('view_log')">View event log</button>
+
+    <h3>Technician</h3>
+    <button onclick="touch('maintenance_start')">Start Maintenance</button>
+    <button onclick="touch('maintenance_end')">End Maintenance</button>
+    <button onclick="touch('resolve_fault')">Resolve fault</button>
+    <button onclick="touch('sign_out')">Sign out</button>
+
+    <div id="inventory"></div>
+    <div id="log"></div>
+  </section>
+
+  <!-- COLUMN 2: hardware -->
+  <section aria-label="Cabinet hardware simulator">
+    <h2>Cabinet hardware (simulator)</h2>
+    <h3>Credential reader</h3>
+    <button onclick="badge('NURSE-0001')">Nurse badge</button>
+    <button onclick="badge('PHARM-0001')">Pharmacist badge</button>
+    <button onclick="badge('TECH-0001')">Technician badge</button>
+    <button onclick="badge('BAD-0000')">Unknown badge</button>
+    <button onclick="badge('NURSE-0002')">New nurse badge (needs a list update)</button>
+    <h3>Alarm buzzer</h3>
+    <div id="buzzer" class="bar"></div>
+    <h3>Drawers</h3>
+    <table id="drawers"></table>
+    <p class="muted">A drawer opens only if its lock is unlocked. "Force open" simulates tampering. "Jam lock" makes the lock ignore commands.</p>
+    <h3>Power</h3>
+    <button onclick="api('power_loss',{})">Cut power</button>
+    <button onclick="api('power_on',{})">Restore power</button>
+    <details>
+      <summary>Demo scenarios to try</summary>
+      <ol>
+        <li>Dispense: Nurse badge, Request, Confirm, Pull open the drawer, Push closed. Check the inventory, then sign in as Pharmacist and View event log.</li>
+        <li>Rejections: Pharmacist badge then Request (role). Technician badge, Start Maintenance, then Nurse badge and Request (mode). Request more than the stock. Three unknown badges (lockout).</li>
+        <li>Drawer fault: dispense, Pull open, then +60 s without closing. Technician badge, Resolve fault.</li>
+        <li>Hardware fault: Jam lock on a drawer, then dispense from it. Or Force open a drawer (tamper).</li>
+        <li>Communication loss: Link down, dispense, watch the queue grow, Link up, watch the Monitoring System receive the messages in order.</li>
+        <li>Power loss: dispense, Pull open, Cut power, Push closed, Restore power. The request is logged as Interrupted.</li>
+      </ol>
+    </details>
+  </section>
+
+  <!-- COLUMN 3: monitoring -->
+  <section aria-label="Monitoring System">
+    <h2>Network and Monitoring System (second team)</h2>
+    <div class="bar">
+      <span id="linkstate"></span>
+      <button onclick="api('link',{up:false})">Link down</button>
+      <button onclick="api('link',{up:true})">Link up</button>
+      <button onclick="api('silent',{on:true})">Monitoring System silent</button>
+      <button onclick="api('silent',{on:false})">Monitoring System answers</button>
+      <span id="queue"></span>
+    </div>
+    <div id="mon_state" class="bar"></div>
+    <h3>Alarms received</h3>
+    <div id="mon_alarms"></div>
+    <h3>Inventory view</h3>
+    <div id="mon_inv"></div>
+    <h3>Authorized-user-list update</h3>
+    <button onclick="api('update_users',{forged:false})">Send valid update (adds a second nurse)</button>
+    <button onclick="api('update_users',{forged:true})">Send forged update</button>
+    <div id="mon_update" class="muted"></div>
+    <h3>Messages received (newest first)</h3>
+    <div class="scroll"><table id="mon_msgs"></table></div>
+  </section>
+</main>
+
+<script>
+let catalogKey = '';
+let beep = null, ctx = null, soundOn = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(action, args) {
+  await fetch('/api/do', {method:'POST', body: JSON.stringify({action, args: args||{}})});
+  refresh();
+}
+const touch = (name, params) => api('touch', {name, params});
+const badge = token => api('badge', {token});
+const dispense = () => touch('dispense', {patient_id: $('d_patient').value.trim(), medication: $('d_med').value, quantity: parseInt($('d_qty').value, 10) || 0});
+const inv = name => touch(name, {medication: $('i_med').value, quantity: parseInt($('i_qty').value, 10)});
+
+function enableSound() {
+  try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); soundOn = !soundOn;
+        $('soundbtn').textContent = soundOn ? 'Alarm sound: on' : 'Turn on alarm sound'; } catch (e) {}
+}
+function setBeep(on) {
+  if (on && soundOn && !beep) {
+    beep = setInterval(() => { try { const o = ctx.createOscillator(); o.frequency.value = 880; o.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.2); } catch (e) {} }, 700);
+  } else if ((!on || !soundOn) && beep) { clearInterval(beep); beep = null; }
+}
+function fillSelect(sel, items) {
+  const cur = sel.value;
+  sel.innerHTML = items.map(i => `<option>${esc(i)}</option>`).join('');
+  if (items.includes(cur)) sel.value = cur;
+}
+function table(head, rows) {
+  return `<table><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>` +
+    rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('') + '</table>';
+}
+
+function render(s) {
+  $('clock').textContent = 'Cabinet time ' + s.iso + '  (' + s.time.toFixed(1) + ' s)';
+  $('speedlabel').textContent = 'Speed ' + s.speed + 'x' + (s.paused ? ' (paused)' : '');
+  $('pausebtn').textContent = s.paused ? 'Resume' : 'Pause';
+  const key = s.catalog.join('|');
+  if (key !== catalogKey && s.catalog.length) { catalogKey = key; fillSelect($('d_med'), s.catalog); fillSelect($('i_med'), s.catalog); }
+
+  const sc = s.screen;
+  if (!sc) {
+    $('status').innerHTML = '<b>[X] Cabinet has no power. The screen is dark.</b>';
+    ['alarms','messages','confirmation','inventory','log'].forEach(i => $(i).innerHTML = '');
+  } else {
+    $('status').innerHTML =
+      `<span><b>${esc(sc.mode.label)}:</b> ${esc(sc.mode.symbol)} ${esc(sc.mode.value)}</span>` +
+      `<span><b>${esc(sc.link.label)}:</b> ${esc(sc.link.symbol)} ${esc(sc.link.value)}</span>` +
+      `<span><b>Signed in:</b> ${sc.session ? esc(sc.session.user) + ' (' + esc(sc.session.role) + ')' : 'nobody'}</span>`;
+    let a = sc.alarms.map(x => `<div class="alarm" role="alert">${esc(x.symbol)} ALARM: ${esc(x.text)}</div>`).join('');
+    if (sc.local_alarm) a += `<div class="alarm" role="alert">${esc(sc.local_alarm.symbol)} ALARM: ${esc(sc.local_alarm.text)}</div>`;
+    $('alarms').innerHTML = a;
+    $('messages').innerHTML = (sc.rejection ? `<div class="reject" role="alert">Rejected: ${esc(sc.rejection)}</div>` : '') +
+                              (sc.notice ? `<div class="notice">${esc(sc.notice)}</div>` : '');
+    $('confirmation').innerHTML = sc.confirmation ?
+      `<div class="confirm"><b>Confirm this request?</b><br>Patient ${esc(sc.confirmation.patient_id)} | ${esc(sc.confirmation.medication)} | quantity ${esc(sc.confirmation.quantity)} | drawer ${esc(sc.confirmation.drawer)}<br>Press Confirm to unlock the drawer, or Cancel request.</div>` : '';
+    $('inventory').innerHTML = sc.session ? '<h3>Inventory</h3>' + table(['Medication','Drawer','On hand','Low-stock threshold','Status'],
+        sc.inventory.map(r => [r.medication, r.drawer, r.quantity, r.threshold,
+          (r.low_stock ? '[!] LOW STOCK ' : '[OK] ok ') + (r.discrepant ? '[!] COUNT DISCREPANCY' : '')])) : '<p class="muted">Sign in to see the inventory.</p>';
+    $('log').innerHTML = (sc.log) ? '<h3>Event log (newest first)</h3><div class="scroll">' + table(['#','Time','Type','User','Patient','Medication','Qty','Outcome','Detail'],
+        sc.log.slice().reverse().slice(0, 40).map(e => [e.seq, e.iso.slice(11), e.type, e.user_id||'', e.patient_id||'', e.medication||'', e.quantity ?? '', e.outcome||'', e.detail||''])) + '</div>' : '';
+  }
+  $('buzzer').innerHTML = s.buzzer ? '<b>[!] Buzzer is SOUNDING</b>' : 'Buzzer is silent';
+  setBeep(s.buzzer);
+  $('drawers').innerHTML = '<tr><th>Drawer</th><th>Lock</th><th>Door</th><th>Actions</th></tr>' + s.drawers.map(d =>
+    `<tr><td>${d.id}</td><td>${d.bolt === 'Locked' ? '[OK] Locked' : '[!] Unlocked'}${d.stuck ? ' (jammed)' : ''}</td><td>${d.open ? '[!] Open' : '[OK] Closed'}</td>` +
+    `<td><button onclick="api('pull',{d:${d.id}})">Pull open</button><button onclick="api('push',{d:${d.id}})">Push closed</button>` +
+    `<button onclick="api('force',{d:${d.id}})">Force open</button><button onclick="api('stick',{d:${d.id}})">${d.stuck ? 'Free lock' : 'Jam lock'}</button></td></tr>`).join('');
+
+  $('linkstate').innerHTML = (s.link_up ? '<b>[OK] Link up</b>' : '<b>[X] Link down</b>') + (s.silent ? ' <b>[!] Monitoring System silent</b>' : '');
+  $('queue').innerHTML = 'ADC transmission queue: <b>' + s.queue + '</b>';
+  const m = s.monitor;
+  $('mon_state').innerHTML = `<span><b>ADC as seen here:</b> ${esc(m.adc_state)}</span>` + (m.last_status ?
+    `<span><b>Last status:</b> mode ${esc(m.last_status.mode)}, health ${esc(m.last_status.health)}</span>` : '') + `<span><b>Messages:</b> ${m.count}</span>`;
+  $('mon_alarms').innerHTML = m.alarms.length ? table(['Created','Received','Alarm'],
+      m.alarms.slice().reverse().map(a => [a.created.toFixed(1), a.received.toFixed(1), `${a.payload.kind} fault, drawer ${a.payload.drawer}`])) : '<p class="muted">No alarms received.</p>';
+  $('mon_inv').innerHTML = m.inventory.length ? table(['Medication','On hand','Status'],
+      m.inventory.map(r => [r.medication, r.quantity, (r.low_stock ? '[!] low stock ' : '[OK] ok ') + (r.discrepant ? '[!] discrepant' : '')])) : '<p class="muted">No inventory changes received yet.</p>';
+  $('mon_update').textContent = m.update ? 'Last update sent to the ADC: ' + m.update : '';
+  $('mon_msgs').innerHTML = '<tr><th>#</th><th>Type</th><th>Created</th><th>Received</th><th>Content</th></tr>' +
+    m.messages.slice().reverse().map(x => `<tr><td>${x.id}</td><td>${esc(x.type)}</td><td>${x.created}</td><td>${x.received}</td><td class="mono">${esc(x.summary)}</td></tr>`).join('');
+}
+
+async function refresh() { try { render(await (await fetch('/api/state')).json()); } catch (e) {} }
+setInterval(refresh, 300); refresh();
+</script>
+</body>
+</html>
