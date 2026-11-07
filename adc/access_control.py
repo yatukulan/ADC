@@ -1,15 +1,13 @@
 """Access Control (AC).
 
-Secret: how credentials are checked, how the authorized-user list is held, the role table (D1 Table 3) and the
-sign-in policy (lockout and session timeout). Every request from a user passes through submit, so no other
-module checks a role or sees a credential.
+Every user request goes through submit(), so no other module checks a role or sees a credential.
 """
 import hashlib
 import math
 
 from .common import ACTIONS, NURSE, PHARMACIST, TECHNICIAN, Result, Session
 
-# D1 Table 3: which role may ask for which action
+# D1 Table 3: which role can do which action
 PERMISSIONS = {
     NURSE: {"dispense", "confirm", "cancel"},
     PHARMACIST: {"replenish", "count", "view_log"},
@@ -19,7 +17,7 @@ PERMISSIONS = {
 
 
 def credential_hash(credential: str) -> str:
-    """The authorized-user list holds a hash of each credential, never the credential itself (D1 Figure 10)."""
+    """Only the hash is stored, never the credential itself (D1 Figure 10)."""
     return hashlib.sha256(credential.encode()).hexdigest()
 
 
@@ -40,15 +38,15 @@ class AccessControl:
             db.replace_users(DEFAULT_USERS)
 
     def connect(self, mf, handlers) -> None:
-        """mf answers whether the mode permits an action. handlers maps each action to the operation that does it."""
+        """mf: checks if the mode allows an action. handlers: action -> the function that does it."""
         self._mf, self._handlers = mf, handlers
 
     def session(self):
         return self._session
 
     def present_credentials(self, credential: str) -> Result:
-        """Implements: FR-AUT-01 (credentials are checked before any protected action), FR-AUT-02 (three rejections in
-        a row lock credential entry for 60 s), FR-LOG-01 (every attempt is logged)."""
+        """Implements: FR-AUT-01, FR-AUT-02, FR-LOG-01.
+        Check the badge before anything else. 3 bad tries in a row lock entry for 60 s. Every try is logged."""
         now = self._hw.now()
         if now < self._locked_until:
             self._db.log("AUTHENTICATION", outcome="Refused", detail="credential entry is locked")
@@ -67,11 +65,9 @@ class AccessControl:
         return Result(True, f"Signed in as {user['user_id']} ({user['role']}).")
 
     def submit(self, action: str, params: dict) -> Result:
-        """Implements: FR-AUT-03 (an action is permitted only when the role of the user is authorized for it in
-        Table 3), FR-DSP-03 (a dispensing request only from a Nurse with an active session), FR-MOD-11 (an action the
-        mode does not permit is rejected), FR-MOD-12 (the reason is returned for display), FR-LOG-07 (each rejection
-        is logged), FR-LOG-02 (a rejected dispensing request is logged as a dispensing entry), FR-MOD-09 and FR-MOD-10
-        (through the mode table in Mode and Fault Manager)."""
+        """Implements: FR-AUT-03, FR-DSP-03, FR-MOD-09, FR-MOD-10, FR-MOD-11, FR-MOD-12, FR-LOG-02, FR-LOG-07.
+        Every request needs a session, a role allowed by Table 3 and a mode that allows it (MF's PERMITTED_IN).
+        A rejection returns the reason for the screen and is logged."""
         s = self._session
         if s is None:
             reason = "Present credentials first."
@@ -84,7 +80,7 @@ class AccessControl:
                 return self._handlers[action](s, params)
             reason = allowed.reason
         who = s.user_id if s else ""
-        if action == "dispense":                   # FR-LOG-02: a rejected dispensing request is a dispensing entry
+        if action == "dispense":                   # FR-LOG-02: a rejected dispense is logged as a dispensing entry
             qty = params.get("quantity")
             self._db.log("DISPENSING", who, str(params.get("patient_id", "")), params.get("medication") or "",
                          qty if isinstance(qty, int) else None, "Rejected", reason)
@@ -100,14 +96,15 @@ class AccessControl:
         self._session = None
 
     def tick(self) -> None:
-        """Implements: FR-AUT-04 (a session ends after 60 s without user input)."""
+        """Implements: FR-AUT-04.
+        End the session after 60 s with no input."""
         if self._session and self._hw.now() - self._session.last_input >= self.SESSION_TIMEOUT:
             self._session = None
 
     def apply_user_list_update(self, users: list) -> Result:
-        """Implements: FR-COM-09 (an authorized-user-list update is accepted), FR-COM-10 (it is applied at once, so
-        before the next credential presentation)."""
+        """Implements: FR-COM-09, FR-COM-10.
+        Swap in the new user list right away, so it's used from the next badge on."""
         self._db.replace_users(users)
         if self._session and not any(u["user_id"] == self._session.user_id for u in users):
-            self._session = None                       # a removed user cannot keep a session
+            self._session = None                       # a removed user loses their session
         return Result(True)

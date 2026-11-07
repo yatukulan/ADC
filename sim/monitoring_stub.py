@@ -1,8 +1,7 @@
-"""A stand-in for the Monitoring System that the other team builds, plus the link between the two systems.
+"""Stand-in for the Monitoring System (built by the other team), plus the link between the two systems.
 
-It follows the interface in the design document: it checks every message, acknowledges it, shows alarms,
-tracks the ADC's status and can send authorized-user-list updates. It uses its own small copy of the
-protection scheme, not the ADC's code.
+Follows the design doc interface: checks and acks every message, shows alarms, tracks the ADC's status and can
+send user-list updates. Uses its own copy of the encryption, not the ADC's code.
 """
 import hashlib
 import hmac
@@ -18,7 +17,7 @@ class SimLink:
 
     def __init__(self) -> None:
         self.up = True
-        self.silent = False                                # the network is up but the Monitoring System does not answer
+        self.silent = False                                # network is up but the Monitoring System doesn't answer
         self._adc_in: Optional[Callable[[Dict], Dict]] = None
         self.monitor = None
 
@@ -51,7 +50,7 @@ class SimLink:
 
 
 class MonitoringStub:
-    SILENT_AFTER = 90        # s without a status message before the ADC is shown as not reporting
+    SILENT_AFTER = 90        # s without a status message before the ADC shows as not reporting
 
     def __init__(self, clock, link) -> None:
         self._t, self._link = clock, link
@@ -64,7 +63,7 @@ class MonitoringStub:
         self.last_update_result = ""
         self._seen = set()
 
-    # --- keys: same derivation as the interface document describes ---
+    # --- keys: same derivation as the interface doc ---
     @staticmethod
     def _keys(secret: bytes, label: bytes):
         return (hmac.new(secret, b"enc|" + label, hashlib.sha256).digest(),
@@ -85,7 +84,7 @@ class MonitoringStub:
         if not hmac.compare_digest(good, env["tag"]):
             return {"nack": "bad tag"}
         body = json.loads(bytes(a ^ b for a, b in zip(ct, self._stream(enc, nonce, len(ct)))))
-        if env["id"] in self._seen:                 # a repeated message (lost ack) is acknowledged but not stored twice
+        if env["id"] in self._seen:                 # a repeat (lost ack): ack it again but don't store it twice
             return {"ack": env["id"]}
         self._seen.add(env["id"])
         row = {"id": env["id"], "created": body["created"], "received": self._t.now(), "type": body["type"],
@@ -112,7 +111,7 @@ class MonitoringStub:
         enc, mac = self._keys(secret, b"mon>adc")
         nonce = secrets.token_bytes(12)
         hashed = [{"credential_hash": hashlib.sha256(u["credential"].encode()).hexdigest(), "user_id": u["user_id"],
-                   "role": u["role"]} for u in users]          # the list holds hashes, not credentials (D1 Figure 10)
+                   "role": u["role"]} for u in users]          # send hashes, not credentials (D1 Figure 10)
         plain = json.dumps({"type": "USER_LIST_UPDATE", "payload": {"users": hashed}}, sort_keys=True).encode()
         ct = bytes(a ^ b for a, b in zip(plain, self._stream(enc, nonce, len(plain))))
         env = {"id": 1, "nonce": nonce.hex(), "ct": ct.hex(),

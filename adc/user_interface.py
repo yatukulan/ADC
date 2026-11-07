@@ -1,19 +1,19 @@
 """User Interface (UI).
 
-Secret: the local devices (credential reader, touchscreen, alarm buzzer), the screen layout and the wording of
-what is shown. UI sits on top: it turns a badge swipe or a touch into a request for Access Control, and it draws
-the screen from what the other modules report. No other module calls UI.
+UI sits on top: it turns a badge or a touch into a request for AC and draws the screen from what the other
+modules report. No other module calls UI.
 """
 from .common import FAULT, NORMAL, MAINTENANCE, Result
 
-# Colours chosen for NFR-USE-03 (the ratios are checked by a test)
+# NFR-USE-03: colours picked for contrast (a test checks the ratios)
 PALETTE = {"text": "#111111", "background": "#FFFFFF", "alarm_text": "#FFFFFF", "alarm_background": "#8B0000",
            "link_text": "#003A8C", "banner_background": "#F2F2F2"}
-SYMBOL = {"ok": "[OK]", "warn": "[!]", "lost": "[X]"}          # NFR-USE-02: a symbol and a word go with every status
+SYMBOL = {"ok": "[OK]", "warn": "[!]", "lost": "[X]"}          # NFR-USE-02: every status has a symbol and a word
 FAULT_NAMES = {"DRAWER": "Drawer fault", "LOCK": "Lock fault", "TAMPER": "Tamper fault"}
 
 
 def contrast_ratio(fg: str, bg: str) -> float:
+    """WCAG contrast ratio between two hex colours."""
     def lum(h: str) -> float:
         c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
         c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
@@ -24,7 +24,7 @@ def contrast_ratio(fg: str, bg: str) -> float:
 
 class UserInterface:
     def __init__(self, devices) -> None:
-        self._dev = devices                          # .buzzer(on): the simulated or the real alarm buzzer
+        self._dev = devices                          # .buzzer(on): simulated or real buzzer
         self._notice = self._rejection = ""
         self._log_view = None
         self._had_session = False
@@ -35,16 +35,16 @@ class UserInterface:
 
     # ---- input ----
     def on_credential(self, data: str) -> None:
-        """Implements: FR-AUT-01 (the credential read at the cabinet goes to Access Control before anything else)."""
+        """Implements: FR-AUT-01.
+        The badge goes to AC before anything else."""
         self._notice = self._rejection = ""
         result = self._ac.present_credentials(data)
         if not result.ok:
             self._rejection = result.reason
 
     def on_touch(self, name: str, params=None) -> Result:
-        """Implements: FR-DSP-04 (the patient identifier, medication and quantity entered are passed on with the
-        request), FR-DSP-06 (the reason for a rejected request is displayed), FR-MOD-12 (the reason for a request the
-        mode does not permit is displayed)."""
+        """Implements: FR-DSP-04, FR-DSP-06, FR-MOD-12.
+        Pass the touch (with patient ID, medication and quantity) to AC. Show the reason if it's rejected."""
         self._notice = self._rejection = ""
         self._ac.touch()
         if name == "sign_out":
@@ -61,8 +61,8 @@ class UserInterface:
 
     # ---- output ----
     def tick(self) -> None:
-        """Implements: NFR-USE-01 (every alarm is sounded as well as shown), FR-AUT-05 (nothing about a patient stays
-        on the screen after the session ends)."""
+        """Implements: NFR-USE-01, FR-AUT-05.
+        Alarms are sounded as well as shown. Patient info is cleared when the session ends."""
         session = self._ac.session()
         if self._had_session and session is None:
             self._notice, self._log_view = "", None
@@ -76,11 +76,9 @@ class UserInterface:
         self._dev.buzzer(bool(self._mf.faults()) or self._cg.queue_nearly_full())
 
     def screen(self) -> dict:
-        """Implements: FR-MOD-13 (the current mode is displayed), FR-COM-08 (the communication status is displayed),
-        FR-FLT-02 (a fault alarm is displayed as soon as the fault is raised), FR-COM-07 (a local alarm is displayed
-        when the queue is 90% full), FR-DSP-07 (the patient identifier, medication and quantity are displayed for the
-        nurse to confirm), FR-AUT-05 (a patient identifier is displayed only while a session is active), NFR-USE-02
-        (each status carries a word and a symbol), NFR-USE-03 (the palette meets the contrast ratio)."""
+        """Implements: FR-MOD-13, FR-COM-08, FR-FLT-02, FR-COM-07, FR-DSP-07, FR-AUT-05, NFR-USE-02, NFR-USE-03.
+        Everything on screen: mode, link, fault alarms, queue alarm, the request to confirm, inventory and log.
+        Patient info only shows while signed in. Every status has a word and a symbol."""
         s, mode, up = self._ac.session(), self._mf.mode(), self._cg.is_connected()
         pending = self._di.pending()
         return {

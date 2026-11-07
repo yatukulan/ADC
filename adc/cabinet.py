@@ -1,6 +1,5 @@
-"""Cabinet: builds the modules, connects them and runs one step of time. It holds no decisions, so it is not a
-module. Power loss is modelled by dropping every module object and keeping only the database file, which is
-what a real cabinet keeps."""
+"""Cabinet: builds the modules, wires them together and runs each step of time. It makes no decisions, so it's
+not a module. Power loss = drop every module object and keep only the database file, like a real cabinet."""
 from .access_control import AccessControl
 from .communication import CommunicationGateway
 from .database import Database
@@ -35,7 +34,7 @@ class Cabinet:
         self.mf.power_on()
 
     def tick(self) -> None:
-        """One step of time: pass on the drawer signals, then let each module check its deadlines."""
+        """One step: pass on the drawer signals, then each module checks its timers."""
         if not self.powered:
             return
         for event in self.hw.events():
@@ -45,7 +44,7 @@ class Cabinet:
             module.tick()
 
     def power_loss(self) -> None:
-        """Everything in memory is lost; only the database file survives."""
+        """Memory is lost. Only the database file survives."""
         self.powered = False
         self._world.drawers.power_cut()
         self._world.link.detach()

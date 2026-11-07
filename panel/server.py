@@ -1,5 +1,5 @@
-"""Browser panel for the simulated ADC: a local web page with the touchscreen, the cabinet hardware and a
-Monitoring System view. Standard library only. Run:  python run_panel.py
+"""Browser panel for the simulated ADC: touchscreen, cabinet hardware and Monitoring System view.
+Standard library only. Run:  python run_panel.py
 """
 import json
 import os
@@ -27,7 +27,7 @@ class Runner:
                 self.world.cabinet.db.close()
             except Exception:
                 pass
-        for suffix in ("", "-wal", "-shm", "-journal"):
+        for suffix in ("", "-wal", "-shm", "-journal"):          # start fresh: delete the old database files
             try:
                 os.remove(self.db_path + suffix)
             except OSError:
@@ -133,7 +133,7 @@ def make_handler(runner: Runner):
             try:
                 with LOCK:
                     out = runner.do(req["action"], req.get("args", {}))
-            except Exception as e:                                 # a bad click must never stop the demo
+            except Exception as e:                                 # a bad click should never crash the demo
                 out = {"ok": False, "error": str(e)}
             self._send(200, json.dumps(out).encode(), "application/json")
     return Handler

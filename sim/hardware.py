@@ -1,17 +1,16 @@
-"""Simulated devices around the ADC: the drawers, the credential reader / touchscreen / buzzer.
+"""Simulated devices around the ADC: the drawers, badge reader, touchscreen and buzzer.
 
-Nothing in here is part of the ADC software. These classes stand in for the physical cabinet so that the
-ADC can be run and demonstrated.
+Not part of the ADC software. They stand in for the real cabinet so the ADC can be run and demoed.
 """
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 
 class SimClock:
-    """Virtual time in seconds. The cabinet reads it through the Hardware Interface module."""
+    """Virtual time in seconds. The ADC reads it through the Hardware Interface."""
 
     def __init__(self) -> None:
-        self.ticks = 0                                  # tenths of a second, so the arithmetic is exact
+        self.ticks = 0                                  # tenths of a second, so the maths stays exact
 
     def now(self) -> float:
         return self.ticks / 10
@@ -24,20 +23,20 @@ class SimClock:
 
 
 class SimDrawerHardware:
-    """Four drawers. Each has a lock bolt and an open/closed sensor. The hardware reports a bolt move 0.3 s
-    after a command. Faults can be injected: a stuck lock, or a drawer forced open."""
+    """Four drawers, each with a lock bolt and an open/closed sensor. A bolt moves 0.3 s after a command.
+    Faults can be injected: a stuck lock or a drawer forced open."""
     BOLT_DELAY = 0.3
 
     def __init__(self, clock, ids=(1, 2, 3, 4)) -> None:
         self._clock = clock
-        self._moves = []                       # (due time, function) of bolt moves under way
+        self._moves = []                       # (due time, function) for bolt moves in progress
         self._ids = list(ids)
         self._bolt = {d: "IN" for d in ids}            # IN = locked
         self._open = {d: False for d in ids}
         self._stuck = {d: False for d in ids}
         self._listener: Optional[Callable[[int, str], None]] = None
 
-    # --- interface used by the Hardware Interface module ---
+    # --- used by the Hardware Interface module ---
     def attach(self, listener) -> None:
         self._listener = listener
 
@@ -79,7 +78,7 @@ class SimDrawerHardware:
 
     # --- what a person or the environment does ---
     def pull_drawer(self, drawer: int) -> bool:
-        """A person pulls a drawer. It only opens if the bolt is out."""
+        """Someone pulls a drawer. It only opens if the bolt is out."""
         if self._open[drawer] or self._bolt[drawer] == "IN":
             return False
         self._open[drawer] = True
@@ -94,7 +93,7 @@ class SimDrawerHardware:
         return True
 
     def force_drawer(self, drawer: int) -> None:
-        """Tampering: the drawer is forced open although the bolt is in."""
+        """Tampering: forced open even though the bolt is in."""
         if not self._open[drawer]:
             self._open[drawer] = True
             self._emit(drawer, "SENSOR_OPEN")
@@ -106,7 +105,7 @@ class SimDrawerHardware:
         return self._stuck[drawer]
 
     def power_cut(self) -> None:
-        """Locks fail secure: every bolt goes in, and nobody hears about it."""
+        """Locks fail secure: every bolt goes in, and no signal is sent."""
         self._listener = None
         for d in self._ids:
             self._bolt[d] = "IN"
@@ -114,8 +113,8 @@ class SimDrawerHardware:
 
 
 class SimLocalDevices:
-    """Credential reader, touchscreen and buzzer. The touchscreen shows whatever the UI module says;
-    the buzzer is just an on/off state that the browser panel turns into sound and a banner."""
+    """Badge reader, touchscreen and buzzer. The screen shows whatever UI says.
+    The buzzer is just on/off; the browser panel turns it into sound and a banner."""
 
     def __init__(self) -> None:
         self.buzzer_on = False

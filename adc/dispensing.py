@@ -1,7 +1,6 @@
 """Dispensing and Inventory (DI).
 
-Secret: the steps of a dispensing transaction, the relock timing, and how inventory records are kept and changed.
-It is the only module that sends an unlock command, and the only one that changes a quantity on hand.
+The only module that unlocks a drawer or changes a quantity on hand.
 """
 from .common import (CANCELLED, COMPLETED, FAULT, FAULTED, INTERRUPTED, NORMAL, OPEN, REJECTED, REQUESTED, SELF_TEST,
                      TIMED_OUT, UNLOCKED, Result)
@@ -16,8 +15,8 @@ class DispensingInventory:
 
     def __init__(self, db, hw) -> None:
         self._db, self._hw = db, hw
-        self._txn = None                    # the one transaction in progress, or None
-        self._last = None                   # how the latest transaction ended, for the screen
+        self._txn = None                    # the transaction in progress, or None
+        self._last = None                   # how the last one ended, for the screen
         if not db.inventory():
             for m, d, q, e, t in SEED:
                 db.save_inventory({"medication": m, "drawer": d, "quantity": q, "expiry": e, "threshold": t,
@@ -28,15 +27,16 @@ class DispensingInventory:
 
     # ---- inventory ----
     def records(self) -> list:
-        """Implements: FR-INV-04 (low stock if and only if the quantity on hand is at or below the threshold)."""
+        """Implements: FR-INV-04.
+        Low stock when quantity on hand <= threshold."""
         return [dict(r, low_stock=r["quantity"] <= r["threshold"]) for r in self._db.inventory()]
 
     def _record(self, medication):
         return next((r for r in self.records() if r["medication"] == medication), None)
 
     def _save(self, rec: dict, user_id: str, outcome: str, detail: str) -> None:
-        """Implements: FR-LOG-04 (each change to a record and each count is logged), FR-COM-03 (each change goes to the
-        Monitoring System)."""
+        """Implements: FR-LOG-04, FR-COM-03.
+        Save, log and send every change or count."""
         self._db.save_inventory(rec)
         rec["low_stock"] = rec["quantity"] <= rec["threshold"]
         self._db.log("INVENTORY", user_id, medication=rec["medication"], quantity=rec["quantity"], outcome=outcome,
@@ -44,7 +44,8 @@ class DispensingInventory:
         self._cg.inventory(rec)
 
     def replenish(self, session, params) -> Result:
-        """Implements: FR-INV-03 (the quantity on hand rises by the replenished quantity)."""
+        """Implements: FR-INV-03.
+        Add the restocked amount to the quantity on hand."""
         rec, qty = self._record(params.get("medication")), params.get("quantity")
         if rec is None or not isinstance(qty, int) or qty <= 0:
             return Result(False, "Choose a medication and a quantity above zero.")
@@ -53,8 +54,8 @@ class DispensingInventory:
         return Result(True, f"{rec['medication']}: {rec['quantity']} on hand.")
 
     def count(self, session, params) -> Result:
-        """Implements: FR-INV-05 (a counted quantity that differs from the quantity on hand marks the record as
-        discrepant; a matching count clears the mark)."""
+        """Implements: FR-INV-05.
+        A count that doesn't match the quantity on hand marks the record discrepant. A match clears it."""
         rec, qty = self._record(params.get("medication")), params.get("quantity")
         if rec is None or not isinstance(qty, int) or qty < 0:
             return Result(False, "Choose a medication and a counted quantity.")
@@ -65,9 +66,9 @@ class DispensingInventory:
 
     # ---- dispensing ----
     def request(self, session, params) -> Result:
-        """Implements: FR-DSP-04 (a patient identifier, a medication and a quantity are required), FR-DSP-05 (a quantity
-        above the quantity on hand is rejected), FR-DSP-06 (the reason is returned for display), FR-DSP-07 (the request
-        is held for the nurse to confirm on the screen), FR-LOG-02 (a rejected request is logged)."""
+        """Implements: FR-DSP-04, FR-DSP-05, FR-DSP-06, FR-DSP-07, FR-LOG-02.
+        Needs a patient ID, medication and quantity, and enough stock. A good request waits for the nurse
+        to confirm. A bad one returns the reason and is logged."""
         patient, med, qty = str(params.get("patient_id", "")).strip(), params.get("medication"), params.get("quantity")
         rec = self._record(med)
         if self._txn:
@@ -85,10 +86,9 @@ class DispensingInventory:
         return Result(False, reason)
 
     def confirm(self, session, params) -> Result:
-        """Implements: FR-DSP-01 (only the drawer holding the requested medication is unlocked, and only after the nurse
-        confirms), NFR-SAF-01 (the mode is checked again immediately before the unlock command), NFR-PRF-01 (the unlock
-        command is sent in the same step as the confirmation), NFR-SAF-02 (this is the only operation that sends an
-        unlock command, so a drawer stays locked unless it ran for that drawer)."""
+        """Implements: FR-DSP-01, NFR-SAF-01, NFR-PRF-01, NFR-SAF-02.
+        Unlock only the right drawer, only after the nurse confirms, in the same step. The mode is checked
+        again right before unlocking. This is the only place that unlocks a drawer."""
         t = self._txn
         if t is None or t["state"] != REQUESTED:
             return Result(False, "There is no request waiting for confirmation.")
@@ -101,7 +101,8 @@ class DispensingInventory:
         return Result(True, f"Drawer {t['drawer']} is unlocked. Take {t['quantity']} x {t['medication']}.")
 
     def cancel(self, session, params) -> Result:
-        """Implements: FR-DSP-10 (a request can be cancelled until the nurse confirms it)."""
+        """Implements: FR-DSP-10.
+        A request can be cancelled until the nurse confirms it."""
         if self._txn is None:
             return Result(False, "There is no request to cancel.")
         if self._txn["state"] != REQUESTED:
@@ -110,9 +111,8 @@ class DispensingInventory:
         return Result(True, "Request cancelled.")
 
     def on_event(self, event) -> None:
-        """Implements: FR-DSP-08 (a drawer reported closed is locked), FR-DSP-02 (a transaction is completed only after
-        the drawer sensor reports the drawer closed), FR-INV-01 (the dispensed quantity is taken from the quantity on
-        hand when the transaction completes)."""
+        """Implements: FR-DSP-08, FR-DSP-02, FR-INV-01.
+        Lock a drawer when it closes. The dispense only completes (and stock only goes down) once the drawer closes."""
         kind, d = event
         t = self._txn
         if kind == "open" and t and t["state"] == UNLOCKED and t["drawer"] == d:
@@ -127,8 +127,8 @@ class DispensingInventory:
                 self._finish(COMPLETED, "drawer closed")
 
     def tick(self) -> None:
-        """Implements: FR-DSP-09 (a drawer not opened within 15 s of unlocking is locked again), D-11 (a request is
-        cancelled when the session ends)."""
+        """Implements: FR-DSP-09, D-11.
+        Relock a drawer that isn't opened within 15 s. Cancel a waiting request when the session ends."""
         t = self._txn
         if t and t["state"] == UNLOCKED and self._hw.now() - t["unlocked_at"] >= self.RELOCK_AFTER:
             self._hw.lock(t["drawer"])
@@ -137,7 +137,8 @@ class DispensingInventory:
             self._finish(CANCELLED, "the session ended")
 
     def mode_changed(self, mode: str) -> None:
-        """Implements: NFR-SAF-01 (every drawer is locked on entering Self-Test or Fault mode)."""
+        """Implements: NFR-SAF-01.
+        Lock every drawer when entering Self-Test or Fault mode."""
         t = self._txn
         if mode in (SELF_TEST, FAULT):
             for d in self._hw.drawers:
@@ -148,25 +149,26 @@ class DispensingInventory:
             self._finish(CANCELLED, f"the ADC entered {mode} mode")
 
     def recover(self) -> None:
-        """Implements: FR-DSP-11 (a transaction in progress at a power loss is recorded as interrupted)."""
+        """Implements: FR-DSP-11.
+        After a power loss, log any unfinished dispense as Interrupted."""
         for t in self._db.open_txns():
             self._db.log("DISPENSING", t["user"], t["patient"], t["medication"], t["quantity"], INTERRUPTED,
                          f"power lost while {t['state']}; quantity on hand unchanged")
             self._db.close_txn(t["id"])
 
     def pending(self):
-        """The request waiting for the nurse to confirm, for the screen."""
+        """The request waiting for the nurse to confirm (for the screen)."""
         t = self._txn
         if t and t["state"] == REQUESTED:
             return {k: t[k] for k in ("patient", "medication", "quantity", "drawer")}
 
     def last(self):
-        """How the latest transaction ended, for the screen."""
+        """How the last dispense ended (for the screen)."""
         return self._last
 
     def _finish(self, outcome: str, detail: str) -> None:
-        """Implements: FR-LOG-02 (each request is logged with its outcome), NFR-AUD-01 (the entry has user, patient
-        identifier, medication, quantity, time and outcome)."""
+        """Implements: FR-LOG-02, NFR-AUD-01.
+        End the transaction and log it with user, patient ID, medication, quantity, time and outcome."""
         t, self._txn = self._txn, None
         self._db.close_txn(t["id"])
         self._db.log("DISPENSING", t["user"], t["patient"], t["medication"], t["quantity"], outcome, detail)

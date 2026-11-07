@@ -1,12 +1,10 @@
 """Mode and Fault Manager (MF).
 
-Secret: the operational-mode rules (which transitions exist, which requests each mode permits) and the fault rules
-(what is a fault, the 30 s and 2 s limits, the self-test). Nobody else changes the mode or decides that something
-is a fault.
+Only this module changes the mode or decides something is a fault.
 """
 from .common import ACTIONS, FAULT, MAINTENANCE, NORMAL, SELF_TEST, UNPOWERED, Result
 
-# FR-MOD-09, FR-MOD-10, FR-MOD-11: the modes in which each request is permitted
+# FR-MOD-09, FR-MOD-10, FR-MOD-11: the modes each request is allowed in
 PERMITTED_IN = {"dispense": {NORMAL}, "confirm": {NORMAL}, "cancel": {NORMAL},
                 "replenish": {NORMAL, MAINTENANCE}, "count": {NORMAL, MAINTENANCE},
                 "view_log": {NORMAL, MAINTENANCE, FAULT},
@@ -27,7 +25,8 @@ class ModeFaultManager:
 
     # ---- questions other modules ask ----
     def mode(self) -> str:
-        """Implements: FR-MOD-02 (one variable holds the mode, so the ADC is in exactly one mode at a time)."""
+        """Implements: FR-MOD-02.
+        One variable holds the mode, so the ADC is only ever in one mode."""
         return self._mode
 
     def faults(self) -> list:
@@ -43,32 +42,36 @@ class ModeFaultManager:
 
     # ---- modes ----
     def _enter(self, new: str) -> None:
-        """Implements: FR-LOG-05 (each change of mode is logged)."""
+        """Implements: FR-LOG-05.
+        Change mode and log it."""
         old, self._mode = self._mode, new
         self._db.log("MODE", outcome=new, detail=f"{old} to {new}")
         self._di.mode_changed(new)
 
     def power_on(self) -> None:
-        """Implements: FR-MOD-03 (Self-Test at power-up), FR-FLT-05 (the self-test runs at every power-up)."""
+        """Implements: FR-MOD-03, FR-FLT-05.
+        Run the self-test on every power-up."""
         self._self_test()
 
     def _self_test(self) -> None:
-        self._enter(SELF_TEST)                                       # locks every drawer: the lock test
+        self._enter(SELF_TEST)                                       # locks every drawer, which is the lock test
         self._test_ends = self._hw.now() + self.SELF_TEST_TIME
 
     def maintenance_start(self, session, params) -> Result:
-        """Implements: FR-MOD-06 (Maintenance only when a Technician requests it, from Normal mode)."""
+        """Implements: FR-MOD-06.
+        Technician only, from Normal mode."""
         self._enter(MAINTENANCE)
         return Result(True, "Maintenance mode started.")
 
     def maintenance_end(self, session, params) -> Result:
-        """Implements: FR-MOD-07."""
+        """Implements: FR-MOD-07.
+        Back to Normal."""
         self._enter(NORMAL)
         return Result(True, "Maintenance mode ended.")
 
     def resolve_fault(self, session, params) -> Result:
-        """Implements: FR-FLT-06 (a fault stays active until a Technician resolves it), FR-LOG-03 (each fault resolved
-        is logged), FR-MOD-08 (resolving leads to Self-Test)."""
+        """Implements: FR-FLT-06, FR-LOG-03, FR-MOD-08.
+        Faults stay until a Technician resolves them. Each one is logged, then the self-test runs."""
         for f in self._faults:
             self._db.log("FAULT", session.user_id, outcome="Resolved", detail=f"{f['kind']} drawer {f['drawer']}")
         self._faults = []
@@ -77,11 +80,11 @@ class ModeFaultManager:
 
     # ---- faults ----
     def raise_fault(self, kind: str, drawer: int, detail: str) -> None:
-        """Implements: FR-LOG-03 (each fault raised is logged), FR-MOD-01 (a fault raised in Normal or Maintenance mode
-        puts the ADC in Fault mode), FR-FLT-02 (the fault is on the list the screen shows from this moment, well inside
-        2 s), FR-COM-01 (the alarm goes to the Monitoring System)."""
+        """Implements: FR-LOG-03, FR-MOD-01, FR-FLT-02, FR-COM-01.
+        Log the fault, put it on the screen right away (limit is 2 s) and alarm the Monitoring System.
+        From Normal or Maintenance, go to Fault mode."""
         if any(f["kind"] == kind and f["drawer"] == drawer for f in self._faults):
-            return
+            return                                                   # already raised
         fault = {"id": self._db.next_id("fault"), "kind": kind, "drawer": drawer, "detail": detail,
                  "raised_at": self._hw.now()}
         self._faults.append(fault)
@@ -91,15 +94,16 @@ class ModeFaultManager:
             self._enter(FAULT)
 
     def on_event(self, event) -> None:
-        """Implements: FR-FLT-04 (a drawer reported open without a preceding unlock command is a tamper fault)."""
+        """Implements: FR-FLT-04.
+        A drawer that opens without an unlock command is a tamper fault."""
         kind, d = event
         if kind == "open" and self._hw.commanded(d) == "locked":
             self.raise_fault("TAMPER", d, "Drawer opened without an unlock command.")
 
     def tick(self) -> None:
-        """Implements: FR-FLT-01 (a drawer opened for a dispensing transaction and not closed within 30 s), FR-FLT-03
-        (a lock that does not report the commanded state within 2 s), FR-MOD-04 (the self-test passes: Normal),
-        FR-MOD-05 (the self-test fails: Fault)."""
+        """Implements: FR-FLT-01, FR-FLT-03, FR-MOD-04, FR-MOD-05.
+        Check the limits: a dispense drawer must close within 30 s, a lock must report back within 2 s.
+        When the self-test ends: pass -> Normal, fail -> Fault."""
         hw, now = self._hw, self._hw.now()
         for d in hw.drawers:
             if hw.bolt(d) != hw.commanded(d) and now - hw.commanded_at(d) >= self.LOCK_LIMIT:

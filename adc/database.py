@@ -1,8 +1,6 @@
 """Local Database (DB).
 
-Secret: how and where data is stored (an SQLite file) and the layout of records and log entries. Other modules
-see inventory records, log entries, the user list, the transmission queue and open-transaction markers.
-There is deliberately no operation that changes or deletes a log entry.
+There's no way to change or delete a log entry, on purpose.
 """
 import json
 import sqlite3
@@ -13,10 +11,11 @@ from .common import Result
 
 class Database:
     def __init__(self, path: str, hw) -> None:
-        self._hw = hw                                    # the source of time for log entries
+        self._hw = hw                                    # clock for log timestamps
         self._c = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._c.row_factory = sqlite3.Row
-        self._c.execute("PRAGMA synchronous=FULL")
+        self._c.execute("PRAGMA synchronous=FULL")       # every write hits the disk before returning
+        # the two triggers make the log append-only
         self._c.executescript("""
             CREATE TABLE IF NOT EXISTS inventory(medication TEXT PRIMARY KEY, drawer INTEGER, quantity INTEGER,
                 expiry TEXT, threshold INTEGER, discrepant INTEGER DEFAULT 0);
@@ -37,8 +36,8 @@ class Database:
 
     # ---- inventory records ----
     def save_inventory(self, rec: Dict) -> None:
-        """Implements: FR-INV-02 (a record holds medication, quantity on hand, drawer, expiration date and low-stock
-        threshold), NFR-REL-01 (the change is committed to disk before the call returns)."""
+        """Implements: FR-INV-02, NFR-REL-01.
+        A record has medication, quantity on hand, drawer, expiry and low-stock threshold. On disk before returning."""
         self._c.execute("INSERT OR REPLACE INTO inventory VALUES(?,?,?,?,?,?)",
                         (rec["medication"], rec["drawer"], rec["quantity"], rec["expiry"], rec["threshold"],
                          int(rec["discrepant"])))
@@ -50,8 +49,8 @@ class Database:
     # ---- log ----
     def log(self, type: str, user_id: str = "", patient_id: str = "", medication: str = "", quantity=None,
             outcome: str = "", detail: str = "") -> None:
-        """Implements: FR-LOG-08 (an entry can be added and never changed), NFR-SEC-01 (an entry has a field for
-        the patient identifier and none for a name)."""
+        """Implements: FR-LOG-08, NFR-SEC-01.
+        Add a log entry (can never be changed). There's a patient ID field but no name field."""
         t = self._hw.now()
         self._c.execute("INSERT INTO log(time,iso,type,user_id,patient_id,medication,quantity,outcome,detail) "
                         "VALUES(?,?,?,?,?,?,?,?,?)",
@@ -61,16 +60,16 @@ class Database:
         return [dict(r) for r in self._c.execute("SELECT * FROM log ORDER BY seq")]
 
     def log_since(self, seq: int) -> List[Dict]:
-        """The entries added after entry number seq, oldest first."""
+        """Entries after number seq, oldest first."""
         return [dict(r) for r in self._c.execute("SELECT * FROM log WHERE seq > ? ORDER BY seq", (seq,))]
 
     def last_seq(self) -> int:
-        """The number of the newest log entry, or 0 for an empty log."""
+        """Number of the newest entry, or 0 if the log is empty."""
         return self._c.execute("SELECT COALESCE(MAX(seq), 0) FROM log").fetchone()[0]
 
     def review(self, session, params) -> Result:
-        """Implements: FR-LOG-09 (the Pharmacist and the Technician can view log entries; Access Control has
-        already checked the role)."""
+        """Implements: FR-LOG-09.
+        Pharmacist and Technician can view the log (AC has already checked the role)."""
         return Result(True, data=self.log_entries())
 
     # ---- authorized users ----
@@ -97,7 +96,7 @@ class Database:
     def queue_length(self) -> int:
         return self._c.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
 
-    # ---- transactions in progress (so that a power loss can be recorded) ----
+    # ---- transactions in progress (so a power loss can be recorded) ----
     def save_txn(self, txn_id: int, data: Dict) -> None:
         self._c.execute("INSERT OR REPLACE INTO txn VALUES(?,?)", (txn_id, json.dumps(data)))
 
@@ -108,6 +107,6 @@ class Database:
         return [json.loads(r[0]) for r in self._c.execute("SELECT data FROM txn ORDER BY txn_id")]
 
     def next_id(self, name: str) -> int:
-        """A number that is never used twice, also across a power loss."""
+        """A number that's never used twice, even across a power loss."""
         self._c.execute("INSERT INTO counters VALUES(?,1) ON CONFLICT(name) DO UPDATE SET value=value+1", (name,))
         return self._c.execute("SELECT value FROM counters WHERE name=?", (name,)).fetchone()[0]

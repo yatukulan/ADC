@@ -1,4 +1,4 @@
-"""Names shared by every module. This file holds no behaviour."""
+"""Names shared by every module. No behaviour here."""
 from dataclasses import dataclass
 from typing import Any
 

@@ -1,7 +1,6 @@
 """Hardware Interface (HW).
 
-Secret: how the drawer locks, the door sensors and the clock are driven: the command and signal codes of the
-drawer driver and the way time is read. Other modules say "lock drawer 2" and ask "is drawer 2 open".
+Other modules just say "lock drawer 2" or ask "is drawer 2 open".
 """
 
 
@@ -53,11 +52,12 @@ class Hardware:
         return self._opened_at[d]
 
     def events(self) -> list:
-        """The ("open", d) and ("closed", d) signals received since the last call."""
+        """("open", d) and ("closed", d) signals since the last call."""
         out, self._events = self._events, []
         return out
 
     def _signal(self, d: int, code: str) -> None:
+        """Called by the driver: update the bolt or sensor state."""
         if code in ("BOLT_IN_OK", "BOLT_OUT_OK"):
             self._bolt[d] = "locked" if code == "BOLT_IN_OK" else "unlocked"
         else:
