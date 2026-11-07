@@ -31,8 +31,6 @@
   .muted { color:var(--muted); font-size:13px; }
   .row { margin:4px 0; }
   .off { opacity:.55; }
-  details { margin-top:10px; border:1px solid var(--line); padding:6px 10px; }
-  summary { cursor:pointer; font-weight:bold; }
   ol { margin:6px 0 0 18px; padding:0; }
   .mono { font-family: Consolas, monospace; font-size:12px; }
   .scroll { max-height:230px; overflow:auto; border:1px solid var(--line); }
@@ -106,17 +104,6 @@
     <h3>Power</h3>
     <button onclick="api('power_loss',{})">Cut power</button>
     <button onclick="api('power_on',{})">Restore power</button>
-    <details>
-      <summary>Demo scenarios to try</summary>
-      <ol>
-        <li>Dispense: Nurse badge, Request, Confirm, Pull open the drawer, Push closed. Check the inventory, then sign in as Pharmacist and View event log.</li>
-        <li>Rejections: Pharmacist badge then Request (role). Technician badge, Start Maintenance, then Nurse badge and Request (mode). Request more than the stock. Three unknown badges (lockout).</li>
-        <li>Drawer fault: dispense, Pull open, then +60 s without closing. Technician badge, Resolve fault.</li>
-        <li>Hardware fault: Jam lock on a drawer, then dispense from it. Or Force open a drawer (tamper).</li>
-        <li>Communication loss: Link down, dispense, watch the queue grow, Link up, watch the Monitoring System receive the messages in order.</li>
-        <li>Power loss: dispense, Pull open, Cut power, Push closed, Restore power. The request is logged as Interrupted.</li>
-      </ol>
-    </details>
   </section>
 
   <!-- COLUMN 3: monitoring -->
